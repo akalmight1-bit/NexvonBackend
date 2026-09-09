@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+.DS_Store
+
+# Downloaded local speech / LLM artifacts
+models/
+*.onnx
+*.wav
+*.mp3
+*.webm
+
+# Editors
+.idea/
+.vscode/
