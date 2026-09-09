@@ -2,122 +2,93 @@
 
 Multi-provider orchestrator + API for **Nexvon**.
 
-Routes chat through local Ollama, NVIDIA NIM, or xAI — same streaming contract for the frontend. Includes self-host backup so you can run models yourself when needed.
+Chat via local Ollama, NVIDIA, or xAI. Voice via **local** Whisper (STT) and Piper (TTS) — models download once, no cloud required for speech.
 
-## What this is
+## Features
 
-| Piece | Role |
-|-------|------|
-| `app/` | FastAPI HTTP API (SSE streaming) |
-| `orchestrator.py` | Your multi-model router (tools / chat / vision) |
-| `providers/` | xAI · NVIDIA · Ollama · OpenAI-compatible |
-| `hosting/` | Docker Compose to run Ollama locally as backup |
+| API | Purpose |
+|-----|---------|
+| `POST /v1/chat` | Streaming chat (SSE) |
+| `POST /v1/stt` | Local speech → text |
+| `POST /v1/tts` | Local text → WAV |
+| `GET /v1/models` | Providers + speech config |
+| `GET /health` | Liveness |
 
 ## Quick start
 
 ```bash
-# 1. Python env
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# 2. Config
 cp .env.example .env
-# edit .env — at least set one of: XAI_API_KEY, NVIDIA_API_KEY, or run Ollama
 
-# 3. (Optional) local models
-cd hosting/ollama && docker compose up -d
-ollama pull llama3.2:3b
+# Optional: local chat models
+cd hosting/ollama && docker compose up -d && cd ../..
 
-# 4. Run API
+# Download local voice models (Whisper + Piper)
+python scripts/download_speech_models.py
+
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Health check: `GET http://127.0.0.1:8000/health`
+## Local voice (offline)
 
-## API
+After `python scripts/download_speech_models.py`:
 
-### `POST /v1/chat` (streaming SSE)
+```bash
+# Speech → text
+curl -s -F "file=@recording.webm" http://127.0.0.1:8000/v1/stt
+
+# Text → speech (WAV)
+curl -s -X POST http://127.0.0.1:8000/v1/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Hello from Nexvon."}' \
+  --output nexvon.wav
+```
+
+Models live under `models/whisper/` and `models/piper/`. Details: `hosting/speech/README.md`.
+
+## Chat API
 
 ```json
+POST /v1/chat
 {
-  "messages": [
-    { "role": "user", "content": "Hello" }
-  ],
+  "messages": [{ "role": "user", "content": "Hello" }],
   "model": "auto",
   "stream": true
 }
 ```
 
-`model` options:
-- `auto` — uses `DEFAULT_PROVIDER`
-- `xai` / `grok` — xAI Grok
-- `nvidia` or `nvidia/<model-id>` — NVIDIA API
-- `ollama` or `ollama/<model>` — local Ollama
-- `local` — alias for default local model
+`model`: `auto` | `xai` | `nvidia` | `nvidia/<id>` | `ollama` | `ollama/<name>` | `local`
 
-SSE response (same as NexvonUI expects):
+SSE:
 
 ```text
-data: {"text":"Hello"}
-data: {"text":" world"}
+data: {"text":"..."}
 data: [DONE]
 ```
 
-### `GET /v1/models`
-
-Lists configured providers and default models.
-
-### `GET /health`
-
-Liveness probe.
-
-## Point NexvonUI at this backend
-
-In the UI repo, set:
+## Point NexvonUI here
 
 ```env
 VITE_API_URL=http://127.0.0.1:8000
 ```
 
-and call `${VITE_API_URL}/v1/chat` instead of `/api/chat`.
+Use `${VITE_API_URL}/v1/chat`, `/v1/stt`, `/v1/tts`.
 
-## Self-host backup
+## Layout
 
-When cloud APIs are down or you want private inference:
-
-```bash
-cd hosting/ollama
-docker compose up -d
-ollama pull llama3.2:3b
+```text
+app/                 FastAPI + orchestrator + providers
+app/speech/          Local Whisper STT + Piper TTS
+models/              Downloaded voice models (gitignored)
+hosting/ollama/      Docker for local LLMs
+hosting/speech/      Voice setup notes
+scripts/             download_speech_models.py
+orchestrator.py      CLI multi-model router (Ollama)
 ```
 
-Then in `.env`:
+## Env
 
-```env
-DEFAULT_PROVIDER=ollama
-FALLBACK_PROVIDER=ollama
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-```
-
-## Env vars
-
-See `.env.example`.
-
-| Variable | Purpose |
-|----------|---------|
-| `XAI_API_KEY` | xAI Grok |
-| `NVIDIA_API_KEY` | NVIDIA NIM / API Catalog |
-| `NVIDIA_BASE_URL` | Default `https://integrate.api.nvidia.com/v1` |
-| `OLLAMA_BASE_URL` | Default `http://127.0.0.1:11434` |
-| `DEFAULT_PROVIDER` | `xai` \| `nvidia` \| `ollama` |
-| `FALLBACK_PROVIDER` | Tried once if primary fails |
-| `CORS_ORIGINS` | Comma-separated frontend origins |
-
-## CLI orchestrator (your original script)
-
-```bash
-python orchestrator.py
-```
-
-Routes naturally between coder tools, chat, and vision via local Ollama models.
+See `.env.example` for all keys (chat providers + `STT_*` / `TTS_*` / `WHISPER_*` / `PIPER_*`).
