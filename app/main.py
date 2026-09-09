@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,8 +12,9 @@ from app.config import get_settings
 from app.orchestrator import stream_chat
 from app.providers import ChatMessage, list_providers
 from app.speech import synthesize_speech, transcribe_audio
+from app.tools.serper import search_web
 
-app = FastAPI(title="NexvonBackend", version="0.2.0")
+app = FastAPI(title="NexvonBackend", version="0.3.0")
 
 settings = get_settings()
 app.add_middleware(
@@ -29,10 +30,17 @@ class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     model: str | None = "auto"
     stream: bool = True
+    # auto (default) | true | false — force or skip Serper for this turn
+    use_search: bool | Literal["auto"] | None = "auto"
 
 
 class TtsRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=500)
+    num: int = Field(default=6, ge=1, le=10)
 
 
 @app.get("/health")
@@ -43,6 +51,7 @@ async def health() -> dict[str, Any]:
         "service": "nexvon-backend",
         "stt": s.stt_enabled,
         "tts": s.tts_enabled,
+        "search": bool(s.serper_api_key) and s.search_enabled,
     }
 
 
@@ -53,6 +62,12 @@ async def models() -> dict[str, Any]:
         "default_provider": s.default_provider,
         "fallback_provider": s.fallback_provider,
         "providers": list_providers(),
+        "search": {
+            "enabled": s.search_enabled and bool(s.serper_api_key),
+            "provider": "serper",
+            "mode": s.search_mode,
+            "num_results": s.search_num_results,
+        },
         "speech": {
             "stt": {
                 "enabled": s.stt_enabled,
@@ -86,9 +101,15 @@ async def chat(body: ChatRequest):
     if not cleaned or cleaned[-1].role != "user":
         raise HTTPException(status_code=400, detail="Last message must be from the user.")
 
+    use_search = body.use_search
+
     async def event_stream():
         try:
-            async for text in stream_chat(cleaned, model=body.model):
+            async for text in stream_chat(
+                cleaned,
+                model=body.model,
+                use_search=use_search,
+            ):
                 yield f"data: {json.dumps({'text': text})}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
@@ -106,9 +127,21 @@ async def chat(body: ChatRequest):
     )
 
 
+@app.post("/v1/search")
+async def search(body: SearchRequest):
+    """Direct Serper Google search — returns structured results."""
+    try:
+        return await search_web(body.query, num=body.num)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Search failed: {e}") from e
+
+
 @app.post("/v1/stt")
 async def stt(file: UploadFile = File(...), language: str | None = None):
-    """Local speech-to-text. Upload audio (webm/wav/mp3/ogg)."""
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty audio file")
@@ -131,7 +164,6 @@ async def stt(file: UploadFile = File(...), language: str | None = None):
 
 @app.post("/v1/tts")
 async def tts(body: TtsRequest):
-    """Local text-to-speech. Returns WAV audio."""
     try:
         wav = synthesize_speech(body.text)
     except RuntimeError as e:
