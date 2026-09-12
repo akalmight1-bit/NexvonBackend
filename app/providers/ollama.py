@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 from collections.abc import AsyncIterator
 
 import httpx
 
 from app.config import Settings
 from app.providers.base import ChatMessage
+
+
+def _data_url_to_b64(url: str) -> str | None:
+    if not url.startswith("data:image/") or "," not in url:
+        return None
+    return url.split(",", 1)[1]
 
 
 class OllamaProvider:
@@ -27,7 +34,16 @@ class OllamaProvider:
         payload_messages = []
         if system:
             payload_messages.append({"role": "system", "content": system})
-        payload_messages.extend({"role": m.role, "content": m.content} for m in messages)
+        for m in messages:
+            entry: dict = {"role": m.role, "content": m.text()}
+            images = []
+            for url in m.image_urls():
+                b64 = _data_url_to_b64(url)
+                if b64:
+                    images.append(b64)
+            if images:
+                entry["images"] = images
+            payload_messages.append(entry)
 
         body = {
             "model": model,

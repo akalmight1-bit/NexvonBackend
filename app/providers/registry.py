@@ -63,7 +63,7 @@ def resolve_model(model: str | None) -> tuple[str, str]:
     if raw in ("grok", "xai"):
         return "xai", s.xai_model
 
-    if raw == "nvidia":
+    if raw in ("nvidia", "nim"):
         return "nvidia", s.nvidia_model
 
     if raw.startswith("nvidia/"):

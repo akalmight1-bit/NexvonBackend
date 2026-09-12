@@ -1,4 +1,4 @@
-"""OpenAI-compatible streaming client — used by NVIDIA, local vLLM/TGI, etc."""
+"""OpenAI-compatible streaming client — used by NVIDIA, xAI, local vLLM/TGI, etc."""
 
 from __future__ import annotations
 
@@ -17,6 +17,11 @@ class OpenAICompatProvider:
         self.api_key = api_key
         self.default_model = default_model
 
+    def _payload_content(self, message: ChatMessage) -> Any:
+        if isinstance(message.content, str):
+            return message.content
+        return message.content
+
     async def stream(
         self,
         messages: list[ChatMessage],
@@ -31,7 +36,7 @@ class OpenAICompatProvider:
         payload_messages: list[dict[str, Any]] = []
         if system:
             payload_messages.append({"role": "system", "content": system})
-        payload_messages.extend({"role": m.role, "content": m.content} for m in messages)
+        payload_messages.extend({"role": m.role, "content": self._payload_content(m)} for m in messages)
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -67,7 +72,6 @@ class OpenAICompatProvider:
                         obj = json.loads(data)
                     except Exception:
                         continue
-                    # OpenAI-style delta
                     choices = obj.get("choices") or []
                     if not choices:
                         continue

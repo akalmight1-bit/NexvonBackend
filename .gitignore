@@ -12,6 +12,9 @@ models/
 *.mp3
 *.webm
 
+# RAG store
+data/
+
 # Editors
 .idea/
 .vscode/

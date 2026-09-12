@@ -31,13 +31,24 @@ class Settings(BaseSettings):
     default_provider: str = "ollama"
     fallback_provider: str = "ollama"
 
-    # Serper (Google search)
+    # Search — Brave and/or Serper (parallel when both keys exist)
     serper_api_key: str = ""
     serper_base_url: str = "https://google.serper.dev"
+    brave_api_key: str = ""
+    brave_base_url: str = "https://api.search.brave.com/res/v1"
     search_enabled: bool = True
     search_num_results: int = 6
-    # auto | always | never — default auto decides from the last user message
+    # auto | brave | serper | always | never
     search_mode: str = "auto"
+    search_provider: str = "auto"
+
+    # RAG
+    rag_enabled: bool = True
+    rag_dir: str = str(ROOT / "data" / "rag")
+    rag_top_k: int = 6
+    embedding_api_key: str = ""
+    embedding_base_url: str = ""
+    embedding_model: str = "text-embedding-3-small"
 
     # Local speech
     stt_enabled: bool = True
@@ -54,7 +65,10 @@ class Settings(BaseSettings):
 
     host: str = "0.0.0.0"
     port: int = 8000
-    cors_origins: str = "http://localhost:8080,http://127.0.0.1:8080"
+    cors_origins: str = (
+        "http://localhost:8080,http://127.0.0.1:8080,"
+        "http://localhost:5173,http://127.0.0.1:5173"
+    )
 
     system_prompt: str = (
         "You are Nexvon, a precise cinematic AI assistant. Speak clearly, with warmth "
@@ -67,6 +81,15 @@ class Settings(BaseSettings):
     @property
     def origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def search_engines(self) -> list[str]:
+        engines: list[str] = []
+        if self.brave_api_key:
+            engines.append("brave")
+        if self.serper_api_key:
+            engines.append("serper")
+        return engines
 
 
 @lru_cache

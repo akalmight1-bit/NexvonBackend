@@ -1,94 +1,77 @@
 # NexvonBackend
 
-Multi-provider orchestrator + API for **Nexvon**.
+API for **Nexvon**: chat orchestration, dual web search (Brave + Serper), file/image handling, and RAG.
 
-Chat via local Ollama, NVIDIA, or xAI. Voice via **local** Whisper (STT) and Piper (TTS) — models download once, no cloud required for speech.
+Point NexvonUI at this service with `NEXVON_API_URL` (server-only). The UI always talks to its own `/api/*` routes; those hop here so CORS and secrets stay off the browser.
 
 ## Features
 
 | API | Purpose |
 |-----|---------|
-| `POST /v1/chat` | Streaming chat (SSE) |
-| `POST /v1/stt` | Local speech → text |
-| `POST /v1/tts` | Local text → WAV |
-| `GET /v1/models` | Providers + speech config |
-| `GET /health` | Liveness |
+| `POST /v1/chat` | Streaming chat (SSE). Accepts `provider` or `model`, multimodal content, optional `knowledge`. |
+| `GET /v1/chat` / `GET /v1/models` | Providers + search/RAG status (UI-compatible). |
+| `POST /v1/search` | Brave + Serper, merged. |
+| `POST /v1/files` | Images (vision data URLs) and text extraction. |
+| `POST /v1/rag/ingest` | Add a document to the knowledge store. |
+| `POST /v1/rag/query` | Retrieve relevant chunks (BM25). |
+| `GET /v1/rag/docs` | List ingested documents. |
+| `POST /v1/stt` / `POST /v1/tts` | Local Whisper + Piper. |
+| `GET /health` | Liveness. |
 
 ## Quick start
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-
 cp .env.example .env
-
-# Optional: local chat models
-cd hosting/ollama && docker compose up -d && cd ../..
-
-# Download local voice models (Whisper + Piper)
-python scripts/download_speech_models.py
-
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-## Local voice (offline)
-
-After `python scripts/download_speech_models.py`:
+Docker:
 
 ```bash
-# Speech → text
-curl -s -F "file=@recording.webm" http://127.0.0.1:8000/v1/stt
-
-# Text → speech (WAV)
-curl -s -X POST http://127.0.0.1:8000/v1/tts \
-  -H "Content-Type: application/json" \
-  -d '{"text":"Hello from Nexvon."}' \
-  --output nexvon.wav
+docker build -t nexvon-backend .
+docker run --env-file .env -p 8000:8000 nexvon-backend
 ```
 
-Models live under `models/whisper/` and `models/piper/`. Details: `hosting/speech/README.md`.
+## Connect NexvonUI
 
-## Chat API
-
-```json
-POST /v1/chat
-{
-  "messages": [{ "role": "user", "content": "Hello" }],
-  "model": "auto",
-  "stream": true
-}
-```
-
-`model`: `auto` | `xai` | `nvidia` | `nvidia/<id>` | `ollama` | `ollama/<name>` | `local`
-
-SSE:
-
-```text
-data: {"text":"..."}
-data: [DONE]
-```
-
-## Point NexvonUI here
+On the **UI server** (not `VITE_`):
 
 ```env
-VITE_API_URL=http://127.0.0.1:8000
+NEXVON_API_URL=https://your-backend.example.com
 ```
 
-Use `${VITE_API_URL}/v1/chat`, `/v1/stt`, `/v1/tts`.
+Same-origin `/api/chat`, `/api/search`, `/api/files`, and `/api/rag` will proxy here. CORS also allows `*.grok.me`, `*.vercel.app`, and `*.netlify.app`.
 
-## Layout
+Add your UI origin to `CORS_ORIGINS` if it is a custom domain.
 
-```text
-app/                 FastAPI + orchestrator + providers
-app/speech/          Local Whisper STT + Piper TTS
-models/              Downloaded voice models (gitignored)
-hosting/ollama/      Docker for local LLMs
-hosting/speech/      Voice setup notes
-scripts/             download_speech_models.py
-orchestrator.py      CLI multi-model router (Ollama)
+## Search
+
+Set one or both:
+
+- `BRAVE_API_KEY` — [Brave Search API](https://brave.com/search/api/)
+- `SERPER_API_KEY` — [Serper](https://serper.dev)
+
+When both are set they run in parallel and results are merged. `SEARCH_PROVIDER=brave|serper|auto`.
+
+## Files
+
+`POST /v1/files` (multipart). Images become `data:` URLs for vision models. Text-like files are inlined. Binary files are metadata only.
+
+## RAG
+
+Lexical BM25 over ingested documents (stored under `data/rag/`, gitignored). Optional OpenAI-compatible embeddings via `EMBEDDING_*` later — retrieval works without them.
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/v1/rag/ingest \
+  -H "Content-Type: application/json" \
+  -d '{"name":"notes.md","text":"# Project\nNexvon uses dual search."}'
 ```
+
+Chat turns automatically retrieve relevant chunks.
 
 ## Env
 
-See `.env.example` for all keys (chat providers + `STT_*` / `TTS_*` / `WHISPER_*` / `PIPER_*`).
+See `.env.example`.
